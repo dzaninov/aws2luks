@@ -86,4 +86,8 @@ If KEEP_IMAGE is set AMI will stay behind so you can create more instances from 
 
 ### Booting
 SSH to instance as **root** to unlock the LUKS device.
+``````
+echo -n "LUKS_PASSWORD" > /lib/cryptsetup/passfifo
+``````
+System will boot if the password is correct.
 

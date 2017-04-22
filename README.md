@@ -80,14 +80,18 @@ vi aws2luks.custom  # review the custom script
 ### Run
 Create the encrypted instance and start it.
 ``````
+ export LUKS_PASSWORD=unlock_password
+ export AWS_ACCESS_KEY_ID=iam_access_key_id
+ export AWS_SECRET_ACCESS_KEY=iam_secret_access_key
 ./aws2luks
 ``````
+Space before export is required for bash not to save the command in history.
 If KEEP_IMAGE is set AMI will stay behind so you can create more instances from it.
 
 ### Booting
 SSH to instance as **root** to unlock the LUKS device.
 ``````
-echo -n "LUKS_PASSWORD" > /lib/cryptsetup/passfifo
+echo -n "unlock_password" > /lib/cryptsetup/passfifo
 ``````
 System will boot if the password is correct.
 

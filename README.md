@@ -17,25 +17,25 @@ xvda              202:0    0    5G  0 disk
 
 ## Installation
 
-### Requirements
+#### Requirements
 - Create new Ubuntu work instance or use the existing **non-production** instance.
 - Install awscli and jq.
 ``````
 sudo apt-get install awscli jq
 ``````
 
-### Downloading the files
+#### Downloading the files
 ``````
 git clone https://github.com/dzaninov/aws2luks.git
 ``````
 
-### Configuration
+#### Configuration
 ``````
 vi aws2luks.conf    # review the configuration
 vi aws2luks.custom  # review the custom script
 ``````
 
-### IAM Policy
+#### IAM Policy
 Script needs permissions to run aws cli.
 - Generate IAM policy
 ``````

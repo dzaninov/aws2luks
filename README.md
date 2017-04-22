@@ -69,7 +69,6 @@ These labels can't exist on the work system.
 ### Download the files
 ``````
 git clone https://github.com/dzaninov/aws2luks.git
-cd aws2luks
 ``````
 
 ### Configure

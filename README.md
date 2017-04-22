@@ -71,13 +71,13 @@ These labels can't exist on the work system.
 git clone https://github.com/dzaninov/aws2luks.git
 ``````
 
-## Configuration
+### Configuration
 ``````
 vi aws2luks.conf    # review the configuration
 vi aws2luks.custom  # review the custom script
 ``````
 
-## Running
+## Creating the instance
 Create the encrypted instance and start it.
 ``````
  export LUKS_PASSWORD=unlock_password

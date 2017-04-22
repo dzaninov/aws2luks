@@ -19,8 +19,6 @@ xvda              202:0    0    5G  0 disk
 
 ### Requirements
 - Create new Ubuntu work instance or use the existing **non-production** instance.
-- Setup AWS custom policy to be able to run these aws cli commands: 
-> attach-volume, create-snapshot, create-volume, delete-snapshot, delete-volume, deregister-image, describe-images, describe-instances, describe-snapshots, describe-volumes, detach-volume, register-image, run-instances.
 - Install awscli and jq.
 ``````
 sudo apt-get install awscli jq
@@ -36,6 +34,14 @@ git clone https://github.com/dzaninov/aws2luks.git
 vi aws2luks.conf    # review the configuration
 vi aws2luks.custom  # review the custom script
 ``````
+
+### IAM Policy
+Script needs permissions to run aws cli.
+- Generate IAM policy
+``````
+./policy aws2luks
+``````
+- Add policy as customer managed policy to IAM.
 
 ## Creating the instance
 Create the encrypted instance and start it.

@@ -3,5 +3,8 @@
 fail() { exit 1; }
 trap fail ERR INT TERM
 
+# this script runs within chroot'ed target volume
+# add any commands you want to run here
+
 ufw allow proto tcp to 0.0.0.0/0 port ssh > /dev/null
 echo y | ufw enable > /dev/null

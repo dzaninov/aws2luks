@@ -86,6 +86,9 @@ Create the encrypted instance and start it.
 ./aws2luks
 ``````
 Space before export is required for bash not to save the command in history.
+
+Instead of exporting AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY stored credentials can be used.
+
 If KEEP_IMAGE is set AMI will stay behind so you can create more instances from it.
 
 ### Booting

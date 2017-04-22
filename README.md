@@ -22,7 +22,7 @@ xvda              202:0    0    5G  0 disk
 - Setup AWS custom policy.
 - Install awscli and jq.
 ``````
-apt install awscli jq
+apt-get install awscli jq
 ``````
 
 ### Downloading the files

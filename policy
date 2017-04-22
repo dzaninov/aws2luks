@@ -1,0 +1,47 @@
+#!/bin/bash
+
+fail() { echo "failed"; exit 1; }
+trap fail ERR INT TERM
+
+if [[ $# -ne 1 ]]
+then
+    echo "usage: $0 <script>"
+    exit 1
+fi
+
+SCRIPT=$1
+REGION=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.region')
+
+cat <<EOT
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+EOT
+
+FIRST=1
+grep "aws ec2" $SCRIPT | sed "s/aws ec2/|/g" | cut -d'|' -f2 | 
+awk '{print $1}' | sort -u |
+while read METHOD
+do
+    test $FIRST -eq 0 && echo ","
+    echo -n "                \"ec2:${METHOD}\""
+    FIRST=0
+done
+echo
+
+cat <<EOT
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "ec2:Region": "$REGION"
+                }
+            }
+        }
+    ]
+}
+EOT
+

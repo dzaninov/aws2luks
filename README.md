@@ -21,6 +21,9 @@ xvda              202:0    0    5G  0 disk
 - Create new Ubuntu work instance or use the existing **non-production** instance.
 - Setup AWS custom policy.
 - Install awscli and jq.
+``````
+apt install awscli jq
+``````
 
 ### Downloading the files
 ``````

@@ -23,7 +23,7 @@ xvda              202:0    0    5G  0 disk
 > attach-volume, create-snapshot, create-volume, delete-snapshot, delete-volume, deregister-image, describe-images, describe-instances, describe-snapshots, describe-volumes, detach-volume, register-image, run-instances.
 - Install awscli and jq.
 ``````
-apt-get install awscli jq
+sudo apt-get install awscli jq
 ``````
 
 ### Downloading the files
@@ -40,6 +40,7 @@ vi aws2luks.custom  # review the custom script
 ## Creating the instance
 Create the encrypted instance and start it.
 ``````
+sudo su
  export LUKS_PASSWORD=unlock_password
  export AWS_ACCESS_KEY_ID=iam_access_key_id
  export AWS_SECRET_ACCESS_KEY=iam_secret_access_key

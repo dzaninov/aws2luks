@@ -20,7 +20,9 @@ xvda              202:0    0    5G  0 disk
 ### Requirements
 - Create new Ubuntu work instance or use the existing **non-production** instance.
 - Setup AWS custom policy to be able to run these aws cli commands: 
-> attach-volume, create-snapshot, create-volume, delete-snapshot, delete-volume, deregister-image, describe-images, describe-instances, describe-snapshots, describe-volumes, detach-volume, register-image, run-instances.
+``````
+attach-volume, create-snapshot, create-volume, delete-snapshot, delete-volume, deregister-image, describe-images, describe-instances, describe-snapshots, describe-volumes, detach-volume, register-image, run-instances.
+``````
 - Install awscli and jq.
 ``````
 apt-get install awscli jq

@@ -68,18 +68,18 @@ System will boot if the password is correct.
 ## Configurable options
 Options that can be configured in aws2luks.conf.
 
-### OS source options
+#### OS source options
 - **OS_URL** - URL of the latest stable Ubuntu release
 - **OS_IMAGE** - Ubuntu image name within the OS_URL archive
 - **OS_SHA256** - URL to file containing SHA256 hashes where OS_URL archive can be found
 
-### Cloud options
+#### Cloud options
 - **INSTANCE_TYPE** - Instance type to create
 - **VOLUME_TYPE** - Instance volume type
 - **SSH_KEY** - SSH key pair name configured for EC2 Region
 - **KEEP_IMAGE** - Keep resulting AMI image and the snapshot after the instance is created
 
-### Sizing
+#### Sizing
 Remember to leave some space in the volume group for snapshots or additional encrypted volumes.
 Any volumes added later will be automatically encrypted.
 - **TARGET_SIZE_GB** - Size of the target volume
@@ -87,23 +87,23 @@ Any volumes added later will be automatically encrypted.
 - **SWAP_SIZE_MB** - Swap size.  Set to 0 for no swap.
 - **ROOT_SIZE_MB** - Root filesystem size
 
-### Encryption
+#### Encryption
 - **LVM_DEVICE** - Name of the plaintext device hosting the LVM. Can't exist on the work system.
 - **RANDOMIZE** - Seed encrypted device with random data
 
-### LVM naming
+#### LVM naming
 These can't exist on the work system.
 - **VG_NAME** - Name of the LVM volume group
 - **LV_NAME_SWAP** - Name of the swap LVM logical volume.
 - **LV_NAME_ROOT** - Name of the root LVM logical volume.
 
-### Device label naming
+#### Device label naming
 These labels can't exist on the work system.
 - **BOOT_LABEL** - /boot filesystem label
 - **SWAP_LABEL** - swap device label
 - **ROOT_LABEL** - root filesystem label
 
-### Other
+#### Other
 - **BOOT_FS_TYPE** - /boot filesystem type
 - **WORK_DEVICE** - Device to which to attach the volume while working on it. This device must not be currently in use.
 - **WORK_DIR** - Mount point for the WORK_DEVICE. It will be created

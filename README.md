@@ -36,11 +36,12 @@ vi aws2luks.custom  # review the custom script
 
 #### IAM Policy
 Script needs permissions to run aws cli commands.
-- Generate IAM policy
+
+Generate IAM policy
 ``````
 ./policy aws2luks
 ``````
-- Add policy as customer managed policy to IAM.
+Add policy as customer managed policy to IAM.
 
 ## Creating the instance
 Create the encrypted instance and start it.

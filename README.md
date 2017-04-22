@@ -78,7 +78,7 @@ Remember to leave some space in the volume group for snapshots or additional enc
 Any volumes added later will be automatically encrypted.
 - **TARGET_SIZE_GB** - Size of the target volume
 - **BOOT_SIZE_MB** - Size of the /boot filesystem
-- **SWAP_SIZE_MB** - Swap size
+- **SWAP_SIZE_MB** - Swap size.  Set to 0 for no swap.
 - **ROOT_SIZE_MB** - Root filesystem size
 
 ### Encryption

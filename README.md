@@ -71,13 +71,13 @@ These labels can't exist on the work system.
 git clone https://github.com/dzaninov/aws2luks.git
 ``````
 
-### Configure
+## Configuration
 ``````
 vi aws2luks.conf    # review the configuration
 vi aws2luks.custom  # review the custom script
 ``````
 
-### Run
+## Running
 Create the encrypted instance and start it.
 ``````
  export LUKS_PASSWORD=unlock_password
@@ -91,7 +91,7 @@ Instead of exporting AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY stored credenti
 
 If KEEP_IMAGE is set AMI will stay behind so you can create more instances from it.
 
-### Booting
+## Booting
 SSH to instance as **root** to unlock the LUKS device.
 ``````
 echo -n "unlock_password" > /lib/cryptsetup/passfifo

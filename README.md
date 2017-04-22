@@ -66,7 +66,7 @@ These labels can't exist on the work system.
 - Setup AWS custom policy.
 - Install awscli and jq.
 
-### Download the files
+### Downloading the files
 ``````
 git clone https://github.com/dzaninov/aws2luks.git
 ``````

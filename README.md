@@ -3,7 +3,6 @@
 ## Description
 The purpose of this project is to create LUKS encrypted EC2 instance in the AWS cloud.
 
-## Target configuration
 Target system will have the following configuration:
 ``````
 NAME              MAJ:MIN RM  SIZE RO TYPE  MOUNTPOINT

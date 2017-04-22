@@ -24,10 +24,10 @@ EOT
 FIRST=1
 grep "aws ec2" $SCRIPT | sed "s/aws ec2/|/g" | cut -d'|' -f2 | 
 awk '{print $1}' | sort -u |
-while read METHOD
+while read COMMAND
 do
     test $FIRST -eq 0 && echo ","
-    echo -n "                \"ec2:${METHOD}\""
+    echo -n "                \"ec2:${COMMAND}\""
     FIRST=0
 done
 echo

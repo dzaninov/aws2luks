@@ -35,7 +35,7 @@ vi aws2luks.custom  # review the custom script
 ``````
 
 #### IAM Policy
-Script needs permissions to run aws cli.
+Script needs permissions to run aws cli commands.
 - Generate IAM policy
 ``````
 ./policy aws2luks

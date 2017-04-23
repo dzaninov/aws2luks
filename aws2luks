@@ -54,14 +54,22 @@ wait_for_image()
 wait_for_instance()
 {
     INSTANCE=$1
-    WAIT_STATE=$2
 
     while true
     do
         aws ec2 describe-instances --instance-ids=$INSTANCE > info
         STATE=$(jq -r '.Reservations[].Instances[].State.Name' < info)
-        test -z "$STATE" && break
-        test "$STATE" == "$WAIT_STATE" && break
+        test -z "$STATE" && fail "Instance was not created"
+
+        if [[ "$STATE" == "running" ]]
+        then
+            PUBLIC_IP=$(jq -r '.Reservations[].Instances[].PublicIpAddress' < info)
+
+            echo "Instance $INSTANCE is running"
+            echo "SSH to $PUBLIC_IP as root to boot the system"
+            break
+        fi
+
         sleep 1
     done
 
@@ -348,9 +356,7 @@ wait_for_image $IMAGE "available"
 echo "Creating Instance"
 aws ec2 run-instances --instance-type $INSTANCE_TYPE --image-id=$IMAGE --key-name=$SSH_KEY > info
 INSTANCE=$(jq -r '.Instances[].InstanceId' < info)
-
-wait_for_instance $INSTANCE "running"
-echo "Instance $INSTANCE is running"
+wait_for_instance $INSTANCE
 
 image_delete && IMAGE_DELETE_DONE=1
 volume_delete && VOLUME_DELETE_DONE=1

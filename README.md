@@ -70,7 +70,8 @@ Setting up the OS
 Creating snapshot (very slow)
 Registering image
 Creating Instance
-Instance i-00a63979ac234bcee is running
+Instance i-00a23999ac234acee is running
+SSH to 52.179.190.207 as root to boot the system
 ``````
 
 ## Booting

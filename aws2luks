@@ -9,7 +9,8 @@ wait_for_volume()
     do
         aws ec2 describe-volumes --volume-ids=$VOLUME > info 2> /dev/null
         STATE=$(jq -r '.Volumes[].State' < info)
-        test $STATE == $WAIT_STATE && break
+        test -z "$STATE" && break
+        test "$STATE" == "$WAIT_STATE" && break
         sleep 1
     done
 
@@ -25,7 +26,8 @@ wait_for_snapshot()
     do
         aws ec2 describe-snapshots --snapshot-ids=$SNAPSHOT > info 2> /dev/null
         STATE=$(jq -r '.Snapshots[].State' < info)
-        test $STATE == $WAIT_STATE && break
+        test -z "$STATE" && break
+        test "$STATE" == "$WAIT_STATE" && break
         sleep 1
     done
 
@@ -41,7 +43,8 @@ wait_for_image()
     do
         aws ec2 describe-images --image-ids=$IMAGE > info 2> /dev/null
         STATE=$(jq -r '.Images[].State' < info)
-        test $STATE == $WAIT_STATE && break
+        test -z "$STATE" && break
+        test "$STATE" == "$WAIT_STATE" && break
         sleep 1
     done
 
@@ -57,7 +60,8 @@ wait_for_instance()
     do
         aws ec2 describe-instances --instance-ids=$INSTANCE > info
         STATE=$(jq -r '.Reservations[].Instances[].State.Name' < info)
-        test $STATE == $WAIT_STATE && break
+        test -z "$STATE" && break
+        test "$STATE" == "$WAIT_STATE" && break
         sleep 1
     done
 
@@ -77,6 +81,8 @@ wait_for_device()
 
 volume_cleanup()
 {
+    test $VOLUME_CLEANUP_DONE -eq 1 && return
+
     test -e $WORK_DIR/setup && rm $WORK_DIR/setup
     test -e $WORK_DIR/custom && rm $WORK_DIR/custom
     test $PTS_MOUNTED -eq 1 && umount $WORK_DIR/dev/pts
@@ -94,18 +100,36 @@ volume_cleanup()
     rm -f info
 }
 
-image_cleanup()
+image_delete()
 {
-    if [[ $KEEP_IMAGE -eq 0 ]]
+    test $IMAGE_DELETE_DONE -eq 1 && return
+
+    if [[ $IMAGE_CREATED -eq 1 ]]
     then
-        test $IMAGE_CREATED -eq 1 && aws ec2 deregister-image --image-id=$IMAGE > /dev/null && \
-            wait_for_image $IMAGE ""
-        test $SNAPSHOT_CREATED -eq 1 && aws ec2 delete-snapshot --snapshot-id=$SNAPSHOT > /dev/null && \
-            wait_for_snapshot $SNAPSHOT ""
-    else
-        echo "Skip deleting image $IMAGE and snapshot $SNAPSHOT"
+        if [[ $KEEP_IMAGE -eq 0 ]]
+        then
+            aws ec2 deregister-image --image-id=$IMAGE > /dev/null && \
+                wait_for_image $IMAGE ""
+        else
+            echo "Skip deregistering image $IMAGE"
+        fi
     fi
 
+    if [[ $SNAPSHOT_CREATED -eq 1 ]]
+    then
+        if [[ $KEEP_IMAGE -eq 0 ]]
+        then
+            aws ec2 delete-snapshot --snapshot-id=$SNAPSHOT > /dev/null && \
+                wait_for_snapshot $SNAPSHOT ""
+        else
+            echo "Skip deleting snapshot $SNAPSHOT"
+        fi
+    fi
+}
+
+volume_delete()
+{
+    test $VOLUME_DELETE_DONE -eq 1 && return
     test $VOLUME_CREATED -eq 1 && aws ec2 delete-volume --volume-id=$VOLUME > /dev/null && \
         wait_for_volume $VOLUME ""
 }
@@ -116,8 +140,11 @@ fail()
 
     test ! -z "$MESSAGE" && echo $MESSAGE
     test -e error.out && cat error.out 1>&2
-    test $IMAGE_CLEANUP_DONE -eq 0 && image_cleanup
-    test $VOLUME_CLEANUP_DONE -eq 0 && volume_cleanup
+
+    echo Cleanup
+    image_delete
+    volume_cleanup
+    volume_delete
 
     echo Failed
     exit 1
@@ -136,8 +163,8 @@ check_requirements()
 }
 
 for VAR in VOLUME_CREATED VOLUME_ATTACHED LUKS_OPENED VG_CREATED WORK_DIR_CREATED ROOT_MOUNTED \
-    BOOT_MOUNTED PTS_MOUNTED DEV_MOUNTED PROC_MOUNTED SYS_MOUNTED RUN_MOUNTED IMAGE_CLEANUP_DONE \
-    VOLUME_CLEANUP_DONE SNAPSHOT_CREATED IMAGE_CREATED
+    BOOT_MOUNTED PTS_MOUNTED DEV_MOUNTED PROC_MOUNTED SYS_MOUNTED RUN_MOUNTED IMAGE_DELETE_DONE \
+    VOLUME_CLEANUP_DONE VOLUME_DELETE_DONE SNAPSHOT_CREATED IMAGE_CREATED
 do
     export $VAR=0
 done
@@ -186,7 +213,7 @@ echo -n $LUKS_PASSWORD | cryptsetup -d - luksOpen $LUKS_DEVICE $LVM_DEVICE && LU
 
 if [[ $RANDOMIZE -eq 1 ]]
 then
-    echo "Writing random data"
+    echo "Seeding encrypted device with random data"
     RANDOM=$(dd if=/dev/urandom bs=16 count=1 status=none | base64)
     openssl aes-128-cbc -nosalt -k "$RANDOM" -in /dev/zero 2> /dev/null |
         dd of=/dev/mapper/$LVM_DEVICE bs=64k status=none 2> /dev/null \
@@ -323,7 +350,8 @@ aws ec2 run-instances --instance-type $INSTANCE_TYPE --image-id=$IMAGE --key-nam
 INSTANCE=$(jq -r '.Instances[].InstanceId' < info)
 
 wait_for_instance $INSTANCE "running"
-echo "Please SSH to Instance $INSTANCE as root"
+echo "Instance $INSTANCE is running"
 
-image_cleanup && IMAGE_CLEANUP_DONE=1
+image_delete && IMAGE_DELETE_DONE=1
+volume_delete && VOLUME_DELETE_DONE=1
 

@@ -58,6 +58,21 @@ Instead of exporting AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY stored credenti
 
 If KEEP_IMAGE is set AMI will stay behind so you can create more instances from it.
 
+## Sample output
+``````
+# ./aws2luks
+Creating a volume
+Seeding encrypted device with random data
+Downloading the OS image
+######################################################################## 100.0%
+Writing the OS image
+Setting up the OS
+Creating snapshot (very slow)
+Registering image
+Creating Instance
+Instance i-00a63979ac234bcee is running
+``````
+
 ## Booting
 SSH to instance as **root** to unlock the LUKS device.
 ``````

@@ -17,12 +17,12 @@ xvda              202:0    0    5G  0 disk
 ## Installation
 
 #### Requirements
+- Check for open bugs [here](https://github.com/dzaninov/aws2luks/issues?q=is%3Aissue+is%3Aopen+label%3Abug)
 - Create new Ubuntu work instance or use the existing **non-production** instance.
 - Install awscli and jq.
 ``````
 sudo apt-get install awscli jq
 ``````
-- Check for open bugs [here](https://github.com/dzaninov/aws2luks/issues?q=is%3Aissue+is%3Aopen+label%3Abug)
 
 #### Downloading the files
 ``````

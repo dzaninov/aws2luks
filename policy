@@ -27,7 +27,9 @@ awk '{print $1}' | sort -u |
 while read COMMAND
 do
     test $FIRST -eq 0 && echo ","
-    echo -n "                \"ec2:${COMMAND}\""
+    FIRST_WORD=$(echo $COMMAND | cut -f 1 -d '-')
+    SECOND_WORD=$(echo $COMMAND | cut -f 2 -d '-')
+    echo -n "                \"ec2:${FIRST_WORD^}${SECOND_WORD^}\""
     FIRST=0
 done
 echo

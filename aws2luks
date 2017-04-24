@@ -102,7 +102,7 @@ volume_cleanup()
     test $ROOT_MOUNTED -eq 1 && umount $WORK_DIR
     test $WORK_DIR_CREATED -eq 1 && rmdir $WORK_DIR
     test $VG_CREATED -eq 1 && vgchange -an $VG_NAME > /dev/null
-    test $LUKS_OPENED -eq 1 && cryptsetup luksClose /dev/mapper/$LVM_DEVICE
+    test $LUKS_OPENED -eq 1 && cryptsetup luksClose $LVM_DEVICE_PATH
     test $VOLUME_ATTACHED -eq 1 && aws ec2 detach-volume --volume-id=$VOLUME > /dev/null && \
         wait_for_volume $VOLUME "available"
     rm -f info
@@ -149,7 +149,7 @@ fail()
     test ! -z "$MESSAGE" && echo $MESSAGE
     test -e error.out && cat error.out 1>&2
 
-    echo Cleanup
+    echo Cleaning up
     image_delete
     volume_cleanup
     volume_delete
@@ -160,13 +160,20 @@ fail()
 
 check_requirements()
 {
-    test -z "$LUKS_PASSWORD" && 
-        fail "LUKS password needs to be exported in LUKS_PASSWORD environmennt variable"
-    test -e $WORK_DEVICE && fail "Work device $WORK_DEVICE is already used"
-    test -e $WORK_DIR && fail "Work mount point already exists"
-    test ! -e /usr/bin/jq && fail "Package jq is required"
-    test ! -e /usr/bin/aws && fail "Package awscli is required"
+    FAIL=0
 
+    test -z "$LUKS_PASSWORD"            && FAIL=1 && \
+        echo "LUKS password needs to be exported in LUKS_PASSWORD environmennt variable"
+    test -e $WORK_DEVICE                && FAIL=1 && echo "Work device $WORK_DEVICE is already used"
+    test -e $WORK_DIR                   && FAIL=1 && echo "Work mount point $WORK_DIR already exists"
+    test -e /dev/$VG_NAME               && FAIL=1 && echo "Volume group $VG_NAME already exists"
+    test -e /dev/$VG_NAME/$LV_NAME_SWAP && FAIL=1 && echo "Logical volume $LV_NAME_SWAP already exists"
+    test -e /dev/$VG_NAME/$LV_NAME_ROOT && FAIL=1 && echo "Logical volume $LV_NAME_ROOT already exists"
+    test -e $LVM_DEVICE_PATH            && FAIL=1 && echo "LVM_DEVICE $LVM_DEVICE_PATH already exists"
+    test ! -e /usr/bin/jq               && FAIL=1 && echo "Package jq is required"
+    test ! -e /usr/bin/aws              && FAIL=1 && echo "Package awscli is required"
+
+    test $FAIL -eq 1 && fail
     return 0
 }
 
@@ -183,6 +190,8 @@ do
     test -z $(echo $LINE | grep '.' | grep -v "^#") && continue
     export $LINE
 done < <(grep . aws2luks.conf | grep -v '^#')
+
+export LVM_DEVICE_PATH=/dev/mapper/$LVM_DEVICE
 
 check_requirements
 
@@ -217,19 +226,19 @@ mke2fs -q -t $BOOT_FS_TYPE -L $BOOT_LABEL $BOOT_DEVICE
 
 LUKS_DEVICE=${WORK_DEVICE}2
 echo -n $LUKS_PASSWORD | cryptsetup luksFormat $LUKS_DEVICE -
-echo -n $LUKS_PASSWORD | cryptsetup -d - luksOpen $LUKS_DEVICE $LVM_DEVICE && LUKS_OPENED=1
+echo -n $LUKS_PASSWORD | cryptsetup -d - luksOpen $LUKS_DEVICE $LVM_DEVICE; LUKS_OPENED=1
 
 if [[ $RANDOMIZE -eq 1 ]]
 then
     echo "Seeding encrypted device with random data"
     RANDOM=$(dd if=/dev/urandom bs=16 count=1 status=none | base64)
     openssl aes-128-cbc -nosalt -k "$RANDOM" -in /dev/zero 2> /dev/null |
-        dd of=/dev/mapper/$LVM_DEVICE bs=64k status=none 2> /dev/null \
+        dd of=$LVM_DEVICE_PATH bs=64k status=none 2> /dev/null \
         || true
 fi
 
-pvcreate -f /dev/mapper/$LVM_DEVICE > /dev/null
-vgcreate -f $VG_NAME /dev/mapper/$LVM_DEVICE > /dev/null  && VG_CREATED=1
+pvcreate -f $LVM_DEVICE_PATH > /dev/null
+vgcreate -f $VG_NAME $LVM_DEVICE_PATH > /dev/null; VG_CREATED=1
 
 if [[ $SWAP_SIZE_MB -ne 0 ]]
 then
@@ -270,12 +279,13 @@ tar xfz $OS_ARCHIVE -O $OS_IMAGE | dd of=$ROOT_DEVICE bs=64k status=none
 e2label $ROOT_DEVICE $ROOT_LABEL > /dev/null
 tune2fs $ROOT_DEVICE -U random > /dev/null
 resize2fs $ROOT_DEVICE > /dev/null 2> error.out; rm error.out
-mkdir $WORK_DIR && WORK_DIR_CREATED=1
-mount -L $ROOT_LABEL $WORK_DIR && ROOT_MOUNTED=1
 
+mkdir $WORK_DIR; WORK_DIR_CREATED=1
+mount -L $ROOT_LABEL $WORK_DIR; ROOT_MOUNTED=1
 mv $WORK_DIR/boot $WORK_DIR/boot.original
 mkdir $WORK_DIR/boot
-mount -L $BOOT_LABEL $WORK_DIR/boot && BOOT_MOUNTED=1
+mount -L $BOOT_LABEL $WORK_DIR/boot; BOOT_MOUNTED=1
+
 mv $WORK_DIR/boot.original/*-generic $WORK_DIR/boot
 rm -rf $WORK_DIR/boot.original
 
@@ -289,7 +299,8 @@ then
         > $WORK_DIR/etc/initramfs-tools/root/.ssh/authorized_keys
     chmod -R 0700 $WORK_DIR/etc/initramfs-tools/root/.ssh
 else
-    echo "SSH key $SSH_KEY not found" && fail
+    echo "SSH key $SSH_KEY not found"
+    fail
 fi
 
 cat <<EOT > $WORK_DIR/etc/fstab
@@ -309,11 +320,11 @@ cat <<EOT > $WORK_DIR/etc/crypttab
 $LVM_DEVICE UUID=$LUKS_DEV_UUID none luks
 EOT
 
-mount --bind /dev $WORK_DIR/dev && DEV_MOUNTED=1
-mount --bind /dev/pts $WORK_DIR/dev/pts && PTS_MOUNTED=1
-mount --bind /proc $WORK_DIR/proc && PROC_MOUNTED=1
-mount --bind /sys $WORK_DIR/sys && SYS_MOUNTED=1
-mount --bind /run $WORK_DIR/run && RUN_MOUNTED=1
+mount --bind /dev $WORK_DIR/dev;          DEV_MOUNTED=1
+mount --bind /dev/pts $WORK_DIR/dev/pts;  PTS_MOUNTED=1
+mount --bind /proc $WORK_DIR/proc;        PROC_MOUNTED=1
+mount --bind /sys $WORK_DIR/sys;          SYS_MOUNTED=1
+mount --bind /run $WORK_DIR/run;          RUN_MOUNTED=1
 
 cat <<EOT > $WORK_DIR/setup
 #!/bin/bash
@@ -337,7 +348,7 @@ fi
 
 echo "Setting up the OS"
 chroot $WORK_DIR bash -i ./setup
-volume_cleanup && VOLUME_CLEANUP_DONE=1
+volume_cleanup; VOLUME_CLEANUP_DONE=1
 
 echo "Creating snapshot (very slow)"
 aws ec2 create-snapshot --volume-id=$VOLUME > info
@@ -358,6 +369,6 @@ aws ec2 run-instances --instance-type $INSTANCE_TYPE --image-id=$IMAGE --key-nam
 INSTANCE=$(jq -r '.Instances[].InstanceId' < info)
 wait_for_instance $INSTANCE
 
-image_delete && IMAGE_DELETE_DONE=1
-volume_delete && VOLUME_DELETE_DONE=1
+image_delete; IMAGE_DELETE_DONE=1
+volume_delete; VOLUME_DELETE_DONE=1
 

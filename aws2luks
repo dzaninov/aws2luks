@@ -368,7 +368,8 @@ IMAGE_CREATED=1
 wait_for_image $IMAGE "available"
 
 echo "Creating Instance"
-aws ec2 run-instances --instance-type $INSTANCE_TYPE --image-id=$IMAGE --key-name=$SSH_KEY > info
+aws ec2 run-instances --instance-type $INSTANCE_TYPE --image-id=$IMAGE --key-name=$SSH_KEY \
+    --security-groups "$SECURITY_GROUP" > info
 INSTANCE=$(jq -r '.Instances[].InstanceId' < info)
 wait_for_instance $INSTANCE
 

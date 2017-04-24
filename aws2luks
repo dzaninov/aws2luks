@@ -170,6 +170,9 @@ check_requirements()
     test -e /dev/$VG_NAME/$LV_NAME_SWAP && FAIL=1 && echo "Logical volume $LV_NAME_SWAP already exists"
     test -e /dev/$VG_NAME/$LV_NAME_ROOT && FAIL=1 && echo "Logical volume $LV_NAME_ROOT already exists"
     test -e $LVM_DEVICE_PATH            && FAIL=1 && echo "LVM_DEVICE $LVM_DEVICE_PATH already exists"
+    test ! -z "$(blkid -L $SWAP_LABEL)" && FAIL=1 && echo "Label $SWAP_LABEL already exists"
+    test ! -z "$(blkid -L $BOOT_LABEL)" && FAIL=1 && echo "Label $BOOT_LABEL already exists"
+    test ! -z "$(blkid -L $ROOT_LABEL)" && FAIL=1 && echo "Label $ROOT_LABEL already exists"
     test ! -e /usr/bin/jq               && FAIL=1 && echo "Package jq is required"
     test ! -e /usr/bin/aws              && FAIL=1 && echo "Package awscli is required"
 

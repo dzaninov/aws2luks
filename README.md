@@ -1,7 +1,7 @@
 # User Guide
 
 ## Description
-The purpose of this project is to create LUKS encrypted EC2 instance in the AWS cloud.
+The purpose of this project is to create a LUKS encrypted Ubuntu AWS EC2 instance.
 
 Target system will have the following configuration:
 ``````

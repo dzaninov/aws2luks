@@ -139,7 +139,7 @@ volume_delete()
 {
     test $VOLUME_DELETE_DONE -eq 1 && return
     test $VOLUME_CREATED -eq 1 && aws ec2 delete-volume --volume-id=$VOLUME > /dev/null && \
-        wait_for_volume $VOLUME ""
+        wait_for_volume $VOLUME "deleting"
 }
 
 fail() 

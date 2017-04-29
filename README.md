@@ -77,8 +77,17 @@ SSH to 52.179.190.207 as root to boot the system
 
 ## Booting
 SSH to instance as **root** to unlock the LUKS device.
+
+First method:
 ``````
-echo -n "unlock_password" > /lib/cryptsetup/passfifo
+# unlock
+Enter passphrase for /dev/xvda2:
+``````
+SSH connection will be dropped when system starts booting.
+
+Second method:
+``````
+# echo -n "unlock_password" > /lib/cryptsetup/passfifo
 ``````
 System will boot if the password is correct.
 

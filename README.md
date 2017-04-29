@@ -77,19 +77,30 @@ SSH to 52.179.190.207 as root to boot the system
 
 ## Booting
 SSH to instance as **root** to unlock the LUKS device.
-
-#### First method:
 ``````
 # unlock
 Enter passphrase for /dev/xvda2:
 ``````
 SSH connection will be dropped when system starts booting.
 
-#### Second method:
+## Rescue shell
+If the system is not usable after it boots or it won't boot the rescue shell can be started to fix the issue.
 ``````
-# echo -n "unlock_password" > /lib/cryptsetup/passfifo
+# rescue
+Enter passphrase for /dev/xvda2:
+
+Exit the rescue shell when done
+
+root@ip-122-35-27-182:/# chmod -x /etc/init.d/ufw
+root@ip-122-35-27-182:/# exit
+exit
+
+Exited rescue shell
+
+#
 ``````
-System will boot if the password is correct.
+The above example shows how to disable the firewall in case it prevents the SSH login.
+No drivers are loaded so some commands will have issues but any file can be modified.
 
 ## Configurable options
 Options that can be configured in aws2luks.conf.

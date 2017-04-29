@@ -1,378 +1,643 @@
 #!/bin/bash
 
-wait_for_volume()
+# GLOBAL VARIABLES
+
+init_globals()
 {
-    VOLUME=$1
-    WAIT_STATE=$2
+    local var
+
+    for var in VOLUME_CREATED VOLUME_ATTACHED LUKS_OPENED VG_CREATED WORK_DIR_CREATED ROOT_MOUNTED \
+        BOOT_MOUNTED PTS_MOUNTED DEV_MOUNTED PROC_MOUNTED SYS_MOUNTED RUN_MOUNTED SNAPSHOT_CREATED \
+         IMAGE_CREATED
+    do
+        eval $var=0
+    done
+
+    TEMP_MASK="/tmp/aws2luks.XXXXXXXXXX"
+    AWS_URL=http://169.254.169.254/latest
+    INFO_FILE=$(mktemp $TEMP_MASK)
+    ERROR_FILE=$(mktemp $TEMP_MASK)
+
+    OS_ARCHIVE=$(basename $OS_URL)
+    REMOTE_HASH=$(curl -s $OS_SHA256 | grep $OS_ARCHIVE | awk '{print $1}')
+
+    VOLUME="unknown"
+    SNAPSHOT="unknown"
+    IMAGE="unknown"
+    INSTANCE="unknown"
+    PUBLIC_IP="unknown"
+
+    AWS_DEVICE=$(echo $WORK_DEVICE | sed "s/\/dev\/xvd/\/dev\/sd/g")
+    BOOT_DEVICE=${WORK_DEVICE}1
+    LUKS_DEVICE=${WORK_DEVICE}2
+    LVM_DEVICE_PATH=/dev/mapper/$LVM_DEVICE
+    SWAP_DEVICE=/dev/mapper/${VG_NAME}-${LV_NAME_SWAP}
+    ROOT_DEVICE=/dev/mapper/${VG_NAME}-${LV_NAME_ROOT}
+
+    curl -s $AWS_URL/dynamic/instance-identity/document > $INFO_FILE
+    THIS_INSTANCE=$(jq -r '.instanceId' < $INFO_FILE)
+    ZONE=$(jq -r '.availabilityZone' < $INFO_FILE)
+    export AWS_DEFAULT_REGION=$(jq -r '.region' < $INFO_FILE)
+
+    check_globals
+}
+
+check_globals()
+{
+    local report=0
+
+    test -z "$LUKS_PASSWORD"            && report=1 && \
+        error LUKS password needs to be exported in LUKS_PASSWORD environmennt variable
+    test -e $WORK_DEVICE                && report=1 && error Work device $WORK_DEVICE is already used
+    test -e $WORK_DIR                   && report=1 && error Work mount point $WORK_DIR already exists
+    test -e /dev/$VG_NAME               && report=1 && error Volume group $VG_NAME already exists
+    test -e /dev/$VG_NAME/$LV_NAME_SWAP && report=1 && error Logical volume $LV_NAME_SWAP already exists
+    test -e /dev/$VG_NAME/$LV_NAME_ROOT && report=1 && error Logical volume $LV_NAME_ROOT already exists
+    test -e $LVM_DEVICE_PATH            && report=1 && error LVM_DEVICE $LVM_DEVICE_PATH already exists
+    test ! -z "$(blkid -L $SWAP_LABEL)" && report=1 && error Label $SWAP_LABEL already exists
+    test ! -z "$(blkid -L $BOOT_LABEL)" && report=1 && error Label $BOOT_LABEL already exists
+    test ! -z "$(blkid -L $ROOT_LABEL)" && report=1 && error Label $ROOT_LABEL already exists
+    test ! -e /usr/bin/jq               && report=1 && error Package jq is required
+    test ! -e /usr/bin/aws              && report=1 && error Package awscli is required
+
+    test $report -eq 1 && fail
+    return 0
+}
+
+cleanup_globals()
+{
+    rm -f $INFO_FILE
+    rm -f $ERROR_FILE
+}
+
+# VOLUME
+
+create_volume()
+{
+    echo Creating a volume
+    aws ec2 create-volume --availability-zone=$ZONE --volume-type=$VOLUME_TYPE \
+        --size=$TARGET_SIZE_GB > $INFO_FILE
+    VOLUME=$(jq -r '.VolumeId' < $INFO_FILE)
+    VOLUME_CREATED=1
+
+    wait_for_volume "available"
+
+    aws ec2 attach-volume --volume-id=$VOLUME --instance-id=$THIS_INSTANCE --device=$AWS_DEVICE > /dev/null
+    VOLUME_ATTACHED=1
+
+    wait_for_volume "in-use"
 
     while true
     do
-        aws ec2 describe-volumes --volume-ids=$VOLUME > info 2> /dev/null
-        STATE=$(jq -r '.Volumes[].State' < info)
-        test -z "$STATE" && break
-        test "$STATE" == "$WAIT_STATE" && break
+        test -e "$WORK_DEVICE" && break
         sleep 1
     done
+}
 
-    rm info
+detach_volume()
+{
+    if [[ $VOLUME_ATTACHED -eq 1 ]]
+    then
+        aws ec2 detach-volume --volume-id=$VOLUME > /dev/null
+        wait_for_volume "available"
+        VOLUME_ATTACHED=0
+    fi
+}
+
+delete_volume()
+{
+    if [[ $VOLUME_CREATED -eq 1 ]]
+    then
+        aws ec2 delete-volume --volume-id=$VOLUME > /dev/null
+        wait_for_volume "deleting"
+        VOLUME_CREATED=0
+    fi
+}
+
+wait_for_volume()
+{
+    local wait_state=$1
+
+    while true
+    do
+        aws ec2 describe-volumes --volume-ids=$VOLUME > $INFO_FILE 2> /dev/null
+        local state=$(jq -r '.Volumes[].State' < $INFO_FILE)
+
+        test -z "$state" && break
+        test "$state" == "$wait_state" && break
+        sleep 1
+    done
+}
+
+# TARGET DEVICE
+
+partition_target()
+{
+    parted -s -a optimal $WORK_DEVICE                \
+        mklabel msdos                                \
+        mkpart primary ext2 0% ${BOOT_SIZE_MB}MiB    \
+        set 1 boot on                                \
+        mkpart primary ext2 ${BOOT_SIZE_MB}MiB 100%
+
+    mke2fs -q -t $BOOT_FS_TYPE -L $BOOT_LABEL $BOOT_DEVICE
+}
+
+create_luks()
+{
+    echo -n $LUKS_PASSWORD | cryptsetup luksFormat $LUKS_DEVICE -
+    LUKS_DEV_UUID=$(blkid -s UUID -o value $LUKS_DEVICE)
+
+    echo -n $LUKS_PASSWORD | cryptsetup -d - luksOpen $LUKS_DEVICE $LVM_DEVICE; LUKS_OPENED=1
+
+    if [[ $RANDOMIZE -eq 1 ]]
+    then
+        echo "Seeding encrypted device with random data"
+
+        local random_password=$(dd if=/dev/urandom bs=16 count=1 status=none | base64)
+
+        openssl aes-128-cbc -nosalt -k "$random_password" -in /dev/zero 2> /dev/null |
+            dd of=$LVM_DEVICE_PATH bs=64k status=none 2> /dev/null || true
+    fi
+}
+
+close_luks()
+{
+    if [[ $LUKS_OPENED -eq 1 ]]
+    then
+        cryptsetup luksClose $LVM_DEVICE_PATH
+        LUKS_OPENED=0
+    fi
+}
+
+# LVM
+
+create_lvm()
+{
+    pvcreate -f $LVM_DEVICE_PATH > /dev/null
+    vgcreate -f $VG_NAME $LVM_DEVICE_PATH > /dev/null; VG_CREATED=1
+
+    if [[ $SWAP_SIZE_MB -ne 0 ]]
+    then
+        lvcreate -L ${SWAP_SIZE_MB}M -n $LV_NAME_SWAP $VG_NAME > /dev/null
+        mkswap -f -L $SWAP_LABEL $SWAP_DEVICE > /dev/null
+    fi
+
+    lvcreate -L ${ROOT_SIZE_MB}M -n $LV_NAME_ROOT $VG_NAME > /dev/null
+}
+
+unregister_lvm()
+{
+    if [[ $VG_CREATED -eq 1 ]]
+    then
+        vgchange -an $VG_NAME > /dev/null
+        VG_CREATED=0
+    fi
+}
+
+# TARGET OS INSTALL
+
+write_os_image()
+{
+    if [[ -e $OS_ARCHIVE ]]
+    then
+        echo "Verifying archive hash"
+        local local_hash=$(sha256sum $OS_ARCHIVE | awk '{print $1}')
+
+        if [[ "$local_hash" == "$REMOTE_HASH" ]]
+        then
+            echo "Verified SHA256: $local_hash"
+        else
+            echo "Local and remote hash do not match"
+            rm $OS_ARCHIVE
+        fi
+    fi
+
+    if [[ ! -e $OS_ARCHIVE ]]
+    then
+        echo "Downloading the OS image"
+        curl -# -o $OS_ARCHIVE $OS_URL
+    fi
+
+    echo "Writing the OS image"
+    tar xfz $OS_ARCHIVE -O $OS_IMAGE | dd of=$ROOT_DEVICE bs=64k status=none
+    e2label $ROOT_DEVICE $ROOT_LABEL > /dev/null
+    tune2fs $ROOT_DEVICE -U random > /dev/null
+    resize2fs $ROOT_DEVICE > /dev/null 2> error.out; rm error.out
+}
+
+setup_os()
+{
+    boot_ssh_setup
+    grub_setup
+
+    create_crypttab $LUKS_DEV_UUID > $WORK_DIR/etc/crypttab
+    create_fstab > $WORK_DIR/etc/fstab
+    create_setup > $WORK_DIR/aws2luks/setup; chmod +x $WORK_DIR/aws2luks/setup
+
+    if [[ -e $CUSTOM_SCRIPT ]]
+    then
+        cp $CUSTOM_SCRIPT $WORK_DIR/aws2luks/custom
+        chmod +x $WORK_DIR/aws2luks/custom
+    fi
+
+    echo "Setting up the OS"
+    chroot $WORK_DIR bash -i /aws2luks/setup
+}
+
+mount_target_os()
+{
+    mkdir $WORK_DIR;                                    WORK_DIR_CREATED=1
+    mount -L $ROOT_LABEL $WORK_DIR;                     ROOT_MOUNTED=1
+    mkdir -p $WORK_DIR/aws2luks
+
+    mv $WORK_DIR/boot $WORK_DIR/boot.original
+    mkdir $WORK_DIR/boot
+    mount -L $BOOT_LABEL $WORK_DIR/boot;                BOOT_MOUNTED=1
+    mv $WORK_DIR/boot.original/*-generic $WORK_DIR/boot
+    rm -rf $WORK_DIR/boot.original
+
+    mount --bind /dev $WORK_DIR/dev;                    DEV_MOUNTED=1
+    mount --bind /dev/pts $WORK_DIR/dev/pts;            PTS_MOUNTED=1
+    mount --bind /proc $WORK_DIR/proc;                  PROC_MOUNTED=1
+    mount --bind /sys $WORK_DIR/sys;                    SYS_MOUNTED=1
+    mount --bind /run $WORK_DIR/run;                    RUN_MOUNTED=1
+}
+
+unmount_target_os()
+{
+    test -e $WORK_DIR/aws2luks   && rm -rf $WORK_DIR/aws2luks
+    test $PTS_MOUNTED -eq 1      && umount $WORK_DIR/dev/pts; PTS_MOUNTED=0
+    test $DEV_MOUNTED -eq 1      && umount $WORK_DIR/dev;     DEV_MOUNTED=0
+    test $PROC_MOUNTED -eq 1     && umount $WORK_DIR/proc;    PROC_MOUNTED=0
+    test $SYS_MOUNTED -eq 1      && umount $WORK_DIR/sys;     SYS_MOUNTED=0
+    test $RUN_MOUNTED -eq 1      && umount $WORK_DIR/run;     RUN_MOUNTED=0
+    test $BOOT_MOUNTED -eq 1     && umount $WORK_DIR/boot;    BOOT_MOUNTED=0
+    test $ROOT_MOUNTED -eq 1     && umount $WORK_DIR;         ROOT_MOUNTED=0
+    test $WORK_DIR_CREATED -eq 1 && rmdir $WORK_DIR;          WORK_DIR_CREATED=0
+}
+
+boot_ssh_setup()
+{
+    local initramfs=$WORK_DIR/etc/initramfs-tools
+
+    mkdir -p $initramfs/root/.ssh
+
+    create_ssh_key > $initramfs/root/.ssh/authorized_keys; chmod -R 0700 $initramfs/root/.ssh
+    create_hook    > $initramfs/hooks/aws2luks;            chmod +x $initramfs/hooks/aws2luks
+    create_unlock  > $WORK_DIR/aws2luks/unlock;            chmod +x $WORK_DIR/aws2luks/unlock
+    create_rescue  > $WORK_DIR/aws2luks/rescue;            chmod +x $WORK_DIR/aws2luks/rescue
+    create_profile > $WORK_DIR/aws2luks/.profile;          chmod +x $WORK_DIR/aws2luks/.profile
+}
+
+grub_setup()
+{
+    local cfg_dir=$WORK_DIR/etc/default
+    local cmdline="cryptdevice=UUID=$LUKS_DEV_UUID:$LVM_DEVICE"
+
+    sed "s/GRUB_CMDLINE_LINUX=\".*\"/GRUB_CMDLINE_LINUX=\"$cmdline\"/g" $cfg_dir/grub \
+        > $cfg_dir/grub.new
+
+    mv $cfg_dir/grub.new $cfg_dir/grub
+}
+
+# TARGET OS FILES
+
+create_setup()
+{
+    cat <<EOT
+#!/bin/bash
+
+fail()
+{
+    test -e error.out && (cat error.out 1>&2; rm error.out)
+    exit 1
+}
+trap fail ERR INT TERM
+
+apt-get -qq update > /dev/null 2> error.out; rm error.out
+apt-get -qq install busybox dropbear > /dev/null 2> error.out; rm error.out
+
+grub-install $WORK_DEVICE > /dev/null 2> error.out; rm error.out
+update-grub 2> error.out; rm error.out
+update-initramfs -u > /dev/null 2> error.out; rm error.out
+
+test -e /aws2luks/custom && /aws2luks/custom
+exit 0
+EOT
+}
+
+create_crypttab()
+{
+    local luks_dev_uuid=$1
+
+    cat <<EOT
+$LVM_DEVICE UUID=$luks_dev_uuid none luks
+EOT
+}
+
+create_fstab()
+{
+    cat <<EOT
+LABEL=$SWAP_LABEL  swap   swap  defaults  0  0
+LABEL=$BOOT_LABEL  /boot  ext4  defaults  0  0
+LABEL=$ROOT_LABEL  /      ext4  defaults  0  0
+EOT
+}
+
+# TARGET BOOT FILES
+
+create_ssh_key()
+{
+    local key_entry=$(curl -s $AWS_URL/meta-data/public-keys/ | grep $SSH_KEY | cut -f 1 -d '=')
+
+    if [[ ! -z "$key_entry" ]]
+    then
+        local key_ident=$(curl -s $AWS_URL/meta-data/public-keys/$key_entry/)
+        curl -s $AWS_URL/meta-data/public-keys/$key_entry/$key_ident
+    else
+        fail "SSH key $SSH_KEY not found"
+    fi
+}
+
+create_hook()
+{
+    cat <<EOT
+#!/bin/bash
+
+fail()
+{
+    test ! -z "\$MESSAGE" && echo "\$0: \$MESSAGE" 1>&2
+    exit 1
+}
+trap fail ERR INT TERM
+
+if [[ "\$1" == "prereqs" ]]
+then
+    echo dropbear
+    exit 0
+fi
+
+. /usr/share/initramfs-tools/hook-functions
+
+DROPBEAR_HOME=\$(ls -d \$DESTDIR/root-?????? 2> /dev/null || true)
+
+test ! -d "\$DROPBEAR_HOME" && fail "Dropbear home not found"
+
+cp /aws2luks/.profile \$DROPBEAR_HOME
+cp /aws2luks/unlock \$DROPBEAR_HOME
+cp /aws2luks/rescue \$DROPBEAR_HOME
+EOT
+}
+
+create_profile()
+{
+    cat <<EOT
+alias unlock=". \$HOME/unlock"
+alias rescue="\$HOME/rescue"
+echo "Enter 'unlock' to unlock and continue booting"
+echo "Enter 'rescue' to enter the rescue shell"
+echo
+EOT
+}
+
+create_unlock()
+{
+    cat <<EOT
+fail() { echo "Script failed"; exit 1; }
+trap fail INT TERM
+
+while true
+do
+    TIMEOUT=5
+    /lib/cryptsetup/askpass "Enter passphrase for /dev/xvda2: " > /lib/cryptsetup/passfifo || fail
+
+    while true
+    do
+        test ! -e \$HOME && exit
+        sleep 1
+        TIMEOUT=$((TIMEOUT - 1))
+        test \$TIMEOUT -eq 0 && break
+    done
+
+    echo "Password is not correct, please try again"
+done
+EOT
+}
+
+create_rescue()
+{
+    cat <<EOT
+fail()
+{
+    test -e error.out && (cat error.out 1>&2; rm error.out)
+    exit 1
+}
+trap fail INT TERM
+
+/sbin/cryptsetup luksOpen /dev/xvda2 $LVM_DEVICE || fail
+/sbin/vgchange --sysinit -a ay > /dev/null 2> error.out || fail; rm error.out
+mkdir /target || fail
+mount $ROOT_DEVICE /target || fail
+mount /dev/xvda1 /target/boot || fail
+mount --bind /dev /target/dev || fail
+mount --bind /dev/pts /target/dev/pts || fail
+mount --bind /proc /target/proc || fail
+mount --bind /sys /target/sys || fail
+mount --bind /run /target/run || fail
+echo
+echo Exit the rescue shell when done
+echo
+chroot /target env HOME=/root PATH=\$PATH:/sbin:/usr/sbin /bin/bash - || fail
+echo
+echo Exited rescue shell
+echo
+umount /target/run /target/sys /target/proc /target/dev/pts /target/dev /target/boot /target || fail
+rmdir /target || fail
+/sbin/vgchange -an > /dev/null 2> error.out || fail; rm error.out
+/sbin/cryptsetup luksClose /dev/mapper/$LVM_DEVICE || fail
+EOT
+}
+
+# SNAPSHOT
+
+create_snapshot()
+{
+    echo "Creating the snapshot (very slow)"
+
+    aws ec2 create-snapshot --volume-id=$VOLUME > $INFO_FILE
+    SNAPSHOT=$(jq -r '.SnapshotId' < $INFO_FILE)
+    SNAPSHOT_CREATED=1
+
+    wait_for_snapshot "completed"
+}
+
+delete_snapshot()
+{
+    if [[ $SNAPSHOT_CREATED -eq 1 ]]
+    then
+        if [[ $KEEP_IMAGE -eq 0 ]]
+        then
+            aws ec2 delete-snapshot --snapshot-id=$SNAPSHOT > /dev/null
+            wait_for_snapshot ""
+        else
+            echo "Skip deleting snapshot $SNAPSHOT"
+        fi
+
+        SNAPSHOT_CREATED=0
+    fi
 }
 
 wait_for_snapshot()
 {
-    SNAPSHOT=$1
-    WAIT_STATE=$2
+    local wait_state=$1
 
     while true
     do
-        aws ec2 describe-snapshots --snapshot-ids=$SNAPSHOT > info 2> /dev/null
-        STATE=$(jq -r '.Snapshots[].State' < info)
-        test -z "$STATE" && break
-        test "$STATE" == "$WAIT_STATE" && break
+        aws ec2 describe-snapshots --snapshot-ids=$SNAPSHOT > $INFO_FILE 2> /dev/null
+        local state=$(jq -r '.Snapshots[].State' < $INFO_FILE)
+
+        test -z "$state" && break
+        test "$state" == "$wait_state" && break
         sleep 1
     done
+}
 
-    rm info
+# IMAGE
+
+register_image()
+{
+    echo "Registering image"
+
+    aws ec2 register-image --name=$SNAPSHOT --root-device-name=/dev/sda1 \
+        --block-device-mappings="DeviceName=/dev/sda1,Ebs={SnapshotId=$SNAPSHOT,VolumeType=$VOLUME_TYPE}" \
+        --virtualization-type=hvm --architecture=x86_64 > $INFO_FILE
+    IMAGE=$(jq -r '.ImageId' < $INFO_FILE)
+    IMAGE_CREATED=1
+
+    wait_for_image "available"
+}
+
+deregister_image()
+{
+    if [[ $IMAGE_CREATED -eq 1 ]]
+    then
+        if [[ $KEEP_IMAGE -eq 0 ]]
+        then
+            aws ec2 deregister-image --image-id=$IMAGE > /dev/null
+            wait_for_image ""
+        else
+            echo "Skip deregistering image $IMAGE"
+        fi
+
+        IMAGE_CREATED=0
+    fi
 }
 
 wait_for_image()
 {
-    IMAGE=$1
-    WAIT_STATE=$2
+    local wait_state=$1
 
     while true
     do
-        aws ec2 describe-images --image-ids=$IMAGE > info 2> /dev/null
-        STATE=$(jq -r '.Images[].State' < info)
-        test -z "$STATE" && break
-        test "$STATE" == "$WAIT_STATE" && break
+        aws ec2 describe-images --image-ids=$IMAGE > $INFO_FILE 2> /dev/null
+        local state=$(jq -r '.Images[].State' < $INFO_FILE)
+
+        test -z "$state" && break
+        test "$state" == "$wait_state" && break
         sleep 1
     done
-
-    rm info
 }
 
-wait_for_instance()
-{
-    INSTANCE=$1
+# INSTANCE
 
+create_instance()
+{
+    echo "Creating Instance"
+
+    aws ec2 run-instances --instance-type $INSTANCE_TYPE --image-id=$IMAGE --key-name=$SSH_KEY \
+        --security-groups "$SECURITY_GROUP" > $INFO_FILE
+    INSTANCE=$(jq -r '.Instances[].InstanceId' < $INFO_FILE)
+
+    wait_instance_start
+}
+
+wait_instance_start()
+{
     while true
     do
-        aws ec2 describe-instances --instance-ids=$INSTANCE > info
-        STATE=$(jq -r '.Reservations[].Instances[].State.Name' < info)
-        test -z "$STATE" && fail "Instance was not created"
+        aws ec2 describe-instances --instance-ids=$INSTANCE > $INFO_FILE
+        local state=$(jq -r '.Reservations[].Instances[].State.Name' < $INFO_FILE)
 
-        if [[ "$STATE" == "running" ]]
+        test -z "$state" && fail "Instance was not created"
+
+        if [[ "$state" == "running" ]]
         then
-            PUBLIC_IP=$(jq -r '.Reservations[].Instances[].PublicIpAddress' < info)
-
-            echo "Instance $INSTANCE is running"
-            echo "SSH to $PUBLIC_IP as root to boot the system"
+            PUBLIC_IP=$(jq -r '.Reservations[].Instances[].PublicIpAddress' < $INFO_FILE)
             break
         fi
 
         sleep 1
     done
-
-    rm info
 }
 
-wait_for_device()
-{
-    DEVICE=$1
+# ERROR HANDLING
 
-    while true
-    do
-        test -e $DEVICE && break
-        sleep 1
-    done
-}
-
-volume_cleanup()
-{
-    test $VOLUME_CLEANUP_DONE -eq 1 && return
-
-    test -e $WORK_DIR/setup && rm $WORK_DIR/setup
-    test -e $WORK_DIR/custom && rm $WORK_DIR/custom
-    test $PTS_MOUNTED -eq 1 && umount $WORK_DIR/dev/pts
-    test $DEV_MOUNTED -eq 1 && umount $WORK_DIR/dev
-    test $PROC_MOUNTED -eq 1 && umount $WORK_DIR/proc
-    test $SYS_MOUNTED -eq 1 && umount $WORK_DIR/sys
-    test $RUN_MOUNTED -eq 1 && umount $WORK_DIR/run
-    test $BOOT_MOUNTED -eq 1 && umount $WORK_DIR/boot
-    test $ROOT_MOUNTED -eq 1 && umount $WORK_DIR
-    test $WORK_DIR_CREATED -eq 1 && rmdir $WORK_DIR
-    test $VG_CREATED -eq 1 && vgchange -an $VG_NAME > /dev/null
-    test $LUKS_OPENED -eq 1 && cryptsetup luksClose $LVM_DEVICE_PATH
-    test $VOLUME_ATTACHED -eq 1 && aws ec2 detach-volume --volume-id=$VOLUME > /dev/null && \
-        wait_for_volume $VOLUME "available"
-    rm -f info
-}
-
-image_delete()
-{
-    test $IMAGE_DELETE_DONE -eq 1 && return
-
-    if [[ $IMAGE_CREATED -eq 1 ]]
-    then
-        if [[ $KEEP_IMAGE -eq 0 ]]
-        then
-            aws ec2 deregister-image --image-id=$IMAGE > /dev/null && \
-                wait_for_image $IMAGE ""
-        else
-            echo "Skip deregistering image $IMAGE"
-        fi
-    fi
-
-    if [[ $SNAPSHOT_CREATED -eq 1 ]]
-    then
-        if [[ $KEEP_IMAGE -eq 0 ]]
-        then
-            aws ec2 delete-snapshot --snapshot-id=$SNAPSHOT > /dev/null && \
-                wait_for_snapshot $SNAPSHOT ""
-        else
-            echo "Skip deleting snapshot $SNAPSHOT"
-        fi
-    fi
-}
-
-volume_delete()
-{
-    test $VOLUME_DELETE_DONE -eq 1 && return
-    test $VOLUME_CREATED -eq 1 && aws ec2 delete-volume --volume-id=$VOLUME > /dev/null && \
-        wait_for_volume $VOLUME "deleting"
-}
+error() { echo "$@" 1>&2; }
 
 fail() 
 { 
-    MESSAGE=$1
+    local message=$1
+    test ! -z "$message" && error $message
 
-    test ! -z "$MESSAGE" && echo $MESSAGE
-    test -e error.out && cat error.out 1>&2
+    test -e "$ERROR_FILE" && message=$(cat $ERROR_FILE)
+    test ! -z "$message" && error $message
 
     echo Cleaning up
-    image_delete
-    volume_cleanup
-    volume_delete
 
-    echo Failed
+    deregister_image
+    delete_snapshot
+    unmount_target_os
+    unregister_lvm
+    close_luks
+    detach_volume
+    delete_volume
+    cleanup_globals
+
+    error Failed
     exit 1
 }
 
-check_requirements()
-{
-    FAIL=0
+# MAIN
 
-    test -z "$LUKS_PASSWORD"            && FAIL=1 && \
-        echo "LUKS password needs to be exported in LUKS_PASSWORD environmennt variable"
-    test -e $WORK_DEVICE                && FAIL=1 && echo "Work device $WORK_DEVICE is already used"
-    test -e $WORK_DIR                   && FAIL=1 && echo "Work mount point $WORK_DIR already exists"
-    test -e /dev/$VG_NAME               && FAIL=1 && echo "Volume group $VG_NAME already exists"
-    test -e /dev/$VG_NAME/$LV_NAME_SWAP && FAIL=1 && echo "Logical volume $LV_NAME_SWAP already exists"
-    test -e /dev/$VG_NAME/$LV_NAME_ROOT && FAIL=1 && echo "Logical volume $LV_NAME_ROOT already exists"
-    test -e $LVM_DEVICE_PATH            && FAIL=1 && echo "LVM_DEVICE $LVM_DEVICE_PATH already exists"
-    test ! -z "$(blkid -L $SWAP_LABEL)" && FAIL=1 && echo "Label $SWAP_LABEL already exists"
-    test ! -z "$(blkid -L $BOOT_LABEL)" && FAIL=1 && echo "Label $BOOT_LABEL already exists"
-    test ! -z "$(blkid -L $ROOT_LABEL)" && FAIL=1 && echo "Label $ROOT_LABEL already exists"
-    test ! -e /usr/bin/jq               && FAIL=1 && echo "Package jq is required"
-    test ! -e /usr/bin/aws              && FAIL=1 && echo "Package awscli is required"
-
-    test $FAIL -eq 1 && fail
-    return 0
-}
-
-for VAR in VOLUME_CREATED VOLUME_ATTACHED LUKS_OPENED VG_CREATED WORK_DIR_CREATED ROOT_MOUNTED \
-    BOOT_MOUNTED PTS_MOUNTED DEV_MOUNTED PROC_MOUNTED SYS_MOUNTED RUN_MOUNTED IMAGE_DELETE_DONE \
-    VOLUME_CLEANUP_DONE VOLUME_DELETE_DONE SNAPSHOT_CREATED IMAGE_CREATED
-do
-    export $VAR=0
-done
+source aws2luks.conf
+init_globals
+check_globals
 trap fail ERR INT TERM
 
-while read LINE
-do
-    test -z $(echo $LINE | grep '.' | grep -v "^#") && continue
-    export $LINE
-done < <(grep . aws2luks.conf | grep -v '^#')
+create_volume
+partition_target
+create_luks
+create_lvm
 
-export LVM_DEVICE_PATH=/dev/mapper/$LVM_DEVICE
+write_os_image
+mount_target_os
+setup_os
+unmount_target_os
 
-check_requirements
+unregister_lvm
+close_luks
+detach_volume
 
-AWS_URL=http://169.254.169.254/latest
-curl -s $AWS_URL/dynamic/instance-identity/document > info
-THIS_INSTANCE=$(jq -r '.instanceId' < info)
-ZONE=$(jq -r '.availabilityZone' < info)
-export AWS_DEFAULT_REGION=$(jq -r '.region' < info)
+create_snapshot
+register_image
+create_instance
 
-echo Creating a volume
-aws ec2 create-volume --availability-zone=$ZONE --volume-type=$VOLUME_TYPE --size=$TARGET_SIZE_GB > info
-VOLUME=$(jq -r '.VolumeId' < info)
-VOLUME_CREATED=1
+echo "Instance $INSTANCE is running"
+echo "SSH to $PUBLIC_IP as root to boot the system"
 
-wait_for_volume $VOLUME "available"
+deregister_image
+delete_snapshot
+delete_volume
 
-AWS_DEVICE=$(echo $WORK_DEVICE | sed "s/\/dev\/xvd/\/dev\/sd/g")
-aws ec2 attach-volume --volume-id=$VOLUME --instance-id=$THIS_INSTANCE --device=$AWS_DEVICE > /dev/null
-VOLUME_ATTACHED=1
-
-wait_for_volume $VOLUME "in-use"
-wait_for_device $WORK_DEVICE
-
-parted -s -a optimal $WORK_DEVICE                \
-    mklabel msdos                                \
-    mkpart primary ext2 0% ${BOOT_SIZE_MB}MiB    \
-    set 1 boot on                                \
-    mkpart primary ext2 ${BOOT_SIZE_MB}MiB 100%
-
-BOOT_DEVICE=${WORK_DEVICE}1
-mke2fs -q -t $BOOT_FS_TYPE -L $BOOT_LABEL $BOOT_DEVICE
-
-LUKS_DEVICE=${WORK_DEVICE}2
-echo -n $LUKS_PASSWORD | cryptsetup luksFormat $LUKS_DEVICE -
-echo -n $LUKS_PASSWORD | cryptsetup -d - luksOpen $LUKS_DEVICE $LVM_DEVICE; LUKS_OPENED=1
-
-if [[ $RANDOMIZE -eq 1 ]]
-then
-    echo "Seeding encrypted device with random data"
-    RANDOM=$(dd if=/dev/urandom bs=16 count=1 status=none | base64)
-    openssl aes-128-cbc -nosalt -k "$RANDOM" -in /dev/zero 2> /dev/null |
-        dd of=$LVM_DEVICE_PATH bs=64k status=none 2> /dev/null \
-        || true
-fi
-
-pvcreate -f $LVM_DEVICE_PATH > /dev/null
-vgcreate -f $VG_NAME $LVM_DEVICE_PATH > /dev/null; VG_CREATED=1
-
-if [[ $SWAP_SIZE_MB -ne 0 ]]
-then
-    SWAP_DEVICE=/dev/mapper/${VG_NAME}-${LV_NAME_SWAP}
-    lvcreate -L ${SWAP_SIZE_MB}M -n $LV_NAME_SWAP $VG_NAME > /dev/null
-    mkswap -f -L $SWAP_LABEL $SWAP_DEVICE > /dev/null
-fi
-
-ROOT_DEVICE=/dev/mapper/${VG_NAME}-${LV_NAME_ROOT}
-lvcreate -L ${ROOT_SIZE_MB}M -n $LV_NAME_ROOT $VG_NAME > /dev/null
-
-OS_ARCHIVE=$(basename $OS_URL)
-
-if [[ -e $OS_ARCHIVE ]]
-then
-    echo "Verifying archive hash"
-    LOCAL_HASH=$(sha256sum $OS_ARCHIVE | awk '{print $1}')
-    REMOTE_HASH=$(curl -s $OS_SHA256 | grep $OS_ARCHIVE | awk '{print $1}')
-
-    if [[ "$LOCAL_HASH" == "$REMOTE_HASH" ]]
-    then
-        echo "Verified SHA256: $LOCAL_HASH"
-    else
-        echo "Local and remote hash do not match"
-        rm $OS_ARCHIVE
-    fi
-fi
-
-if [[ ! -e $OS_ARCHIVE ]]
-then
-    echo "Downloading the OS image"
-    curl -# -o $OS_ARCHIVE $OS_URL
-fi
-
-echo "Writing the OS image"
-OS_SIZE=$(gzip -l $OS_ARCHIVE | tail -1 | awk '{print $2}')
-tar xfz $OS_ARCHIVE -O $OS_IMAGE | dd of=$ROOT_DEVICE bs=64k status=none
-e2label $ROOT_DEVICE $ROOT_LABEL > /dev/null
-tune2fs $ROOT_DEVICE -U random > /dev/null
-resize2fs $ROOT_DEVICE > /dev/null 2> error.out; rm error.out
-
-mkdir $WORK_DIR; WORK_DIR_CREATED=1
-mount -L $ROOT_LABEL $WORK_DIR; ROOT_MOUNTED=1
-mv $WORK_DIR/boot $WORK_DIR/boot.original
-mkdir $WORK_DIR/boot
-mount -L $BOOT_LABEL $WORK_DIR/boot; BOOT_MOUNTED=1
-
-mv $WORK_DIR/boot.original/*-generic $WORK_DIR/boot
-rm -rf $WORK_DIR/boot.original
-
-KEY_ENTRY=$(curl -s $AWS_URL/meta-data/public-keys/ | grep $SSH_KEY | cut -f 1 -d '=')
-
-if [[ ! -z "$KEY_ENTRY" ]]
-then
-    KEY_IDENT=$(curl -s $AWS_URL/meta-data/public-keys/$KEY_ENTRY/)
-    mkdir -p $WORK_DIR/etc/initramfs-tools/root/.ssh
-    curl -s $AWS_URL/meta-data/public-keys/$KEY_ENTRY/$KEY_IDENT \
-        > $WORK_DIR/etc/initramfs-tools/root/.ssh/authorized_keys
-    chmod -R 0700 $WORK_DIR/etc/initramfs-tools/root/.ssh
-else
-    echo "SSH key $SSH_KEY not found"
-    fail
-fi
-
-cat <<EOT > $WORK_DIR/etc/fstab
-LABEL=$SWAP_LABEL  swap   swap  defaults  0  0
-LABEL=$BOOT_LABEL  /boot  ext4  defaults  0  0
-LABEL=$ROOT_LABEL  /      ext4  defaults  0  0
-EOT
-
-LUKS_DEV_UUID=$(blkid -s UUID -o value $LUKS_DEVICE)
-CFG_DIR=$WORK_DIR/etc/default
-CMDLINE="cryptdevice=UUID=$LUKS_DEV_UUID:$LVM_DEVICE"
-
-sed "s/GRUB_CMDLINE_LINUX=\".*\"/GRUB_CMDLINE_LINUX=\"$CMDLINE\"/g" $CFG_DIR/grub > $CFG_DIR/grub.new
-mv $CFG_DIR/grub.new $CFG_DIR/grub
-
-cat <<EOT > $WORK_DIR/etc/crypttab
-$LVM_DEVICE UUID=$LUKS_DEV_UUID none luks
-EOT
-
-mount --bind /dev $WORK_DIR/dev;          DEV_MOUNTED=1
-mount --bind /dev/pts $WORK_DIR/dev/pts;  PTS_MOUNTED=1
-mount --bind /proc $WORK_DIR/proc;        PROC_MOUNTED=1
-mount --bind /sys $WORK_DIR/sys;          SYS_MOUNTED=1
-mount --bind /run $WORK_DIR/run;          RUN_MOUNTED=1
-
-cat <<EOT > $WORK_DIR/setup
-#!/bin/bash
-fail() { test -e error.out && (cat error.out 1>&2; rm error.out); exit 1; }
-trap fail ERR INT TERM
-apt-get -qq update > /dev/null 2> error.out; rm error.out
-apt-get -qq install busybox dropbear > /dev/null 2> error.out; rm error.out
-grub-install $WORK_DEVICE > /dev/null 2> error.out; rm error.out
-update-grub 2> error.out; rm error.out
-update-initramfs -u > /dev/null 2> error.out; rm error.out
-test -e /custom && /custom
-exit
-EOT
-chmod +x $WORK_DIR/setup
-
-if [[ -e $CUSTOM_SCRIPT ]]
-then
-    cp $CUSTOM_SCRIPT $WORK_DIR/custom
-    chmod +x $WORK_DIR/custom
-fi
-
-echo "Setting up the OS"
-chroot $WORK_DIR bash -i ./setup
-volume_cleanup; VOLUME_CLEANUP_DONE=1
-
-echo "Creating snapshot (very slow)"
-aws ec2 create-snapshot --volume-id=$VOLUME > info
-SNAPSHOT=$(jq -r '.SnapshotId' < info)
-SNAPSHOT_CREATED=1
-wait_for_snapshot $SNAPSHOT "completed"
-
-echo "Registering image"
-aws ec2 register-image --name=$SNAPSHOT --root-device-name=/dev/sda1 \
-    --block-device-mappings="DeviceName=/dev/sda1,Ebs={SnapshotId=$SNAPSHOT,VolumeType=$VOLUME_TYPE}" \
-    --virtualization-type=hvm --architecture=x86_64 > info
-IMAGE=$(jq -r '.ImageId' < info)
-IMAGE_CREATED=1
-wait_for_image $IMAGE "available"
-
-echo "Creating Instance"
-aws ec2 run-instances --instance-type $INSTANCE_TYPE --image-id=$IMAGE --key-name=$SSH_KEY \
-    --security-groups "$SECURITY_GROUP" > info
-INSTANCE=$(jq -r '.Instances[].InstanceId' < info)
-wait_for_instance $INSTANCE
-
-image_delete; IMAGE_DELETE_DONE=1
-volume_delete; VOLUME_DELETE_DONE=1
+cleanup_globals
 

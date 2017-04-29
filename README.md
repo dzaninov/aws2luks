@@ -94,7 +94,7 @@ System will boot if the password is correct.
 ## Configurable options
 Options that can be configured in aws2luks.conf.
 
-#### OS source options
+**OS source options**
 - **OS_URL** - URL of the latest stable Ubuntu release
 - **OS_IMAGE** - Ubuntu image name within the OS_URL archive
 - **OS_SHA256** - URL to file containing SHA256 hashes where OS_URL archive can be found

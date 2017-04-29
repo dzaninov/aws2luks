@@ -78,8 +78,20 @@ SSH to 52.179.190.207 as root to boot the system
 ## Booting
 SSH to instance as **root** to unlock the LUKS device.
 ``````
+Using username "root".
+Authenticating with public key "ssh"
+Passphrase for key "ssh":
+
+
+BusyBox v1.22.1 (Ubuntu 1:1.22.0-15ubuntu1) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+Enter 'unlock' to unlock and continue booting
+Enter 'rescue' to enter the rescue shell
+
 # unlock
 Enter passphrase for /dev/xvda2:
+
 ``````
 SSH connection will be dropped when system starts booting.
 

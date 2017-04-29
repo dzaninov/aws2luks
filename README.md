@@ -113,7 +113,7 @@ Exited rescue shell
 ``````
 The above example shows how to disable the firewall in case it prevents the SSH login.
 
-No drivers are loaded so some commands will have issues but any file can be modified.
+No drivers are loaded at this time so some commands will have issues but any file can be modified.
 
 ## Configurable options
 Options that can be configured in aws2luks.conf.

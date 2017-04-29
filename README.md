@@ -13,6 +13,7 @@ xvda              202:0    0    5G  0 disk
     ├─system-swap 252:1    0  512M  0 lvm   [SWAP]
     └─system-root 252:2    0    4G  0 lvm   /
 ``````
+![](diagram.png "")
 
 ## Installation
 

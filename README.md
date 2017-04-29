@@ -96,7 +96,7 @@ Enter passphrase for /dev/xvda2:
 SSH connection will be dropped when system starts booting.
 
 ## Rescue shell
-If the system is not usable after it boots or it won't boot the rescue shell can be started to fix the issue.
+If the system is not usable after it boots or it won't boot, the rescue shell can be started to fix the issue.
 ``````
 # rescue
 Enter passphrase for /dev/xvda2:

@@ -4,15 +4,6 @@
 The purpose of this project is to create a LUKS encrypted Ubuntu AWS EC2 instance.
 
 Target system will have the following configuration:
-``````
-NAME              MAJ:MIN RM  SIZE RO TYPE  MOUNTPOINT
-xvda              202:0    0    5G  0 disk
-├─xvda1           202:1    0  127M  0 part  /boot
-└─xvda2           202:2    0  4.9G  0 part
-  └─lvm_crypt     252:0    0  4.9G  0 crypt
-    ├─system-swap 252:1    0  512M  0 lvm   [SWAP]
-    └─system-root 252:2    0    4G  0 lvm   /
-``````
 ![](diagram.png "")
 
 ## Installation

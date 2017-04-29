@@ -76,7 +76,7 @@ SSH to 52.179.190.207 as root to boot the system
 ``````
 
 ## Booting
-SSH to instance as **root** to unlock the LUKS device.
+SSH to instance as **root** to unlock the LUKS device and continue booting.
 ``````
 Using username "root".
 Authenticating with public key "ssh"

@@ -111,7 +111,7 @@ Exited rescue shell
 
 #
 ``````
-The above example shows how to disable the firewall in case it prevents the SSH login.
+The above example shows how to disable the firewall in case it is preventing the SSH login.
 
 No drivers are loaded at this time so some commands will have issues but any file can be modified.
 

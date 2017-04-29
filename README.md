@@ -3,7 +3,7 @@
 ## Description
 The purpose of this project is to create a LUKS encrypted Ubuntu AWS EC2 instance.
 
-#### Target system will have the following configuration:
+### Target system will have the following configuration:
 ![](diagram.png "")
 
 ## Installation

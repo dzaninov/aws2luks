@@ -118,7 +118,7 @@ Options that can be configured in aws2luks.conf.
 #### Cloud options
 - **INSTANCE_TYPE** - Instance type to create
 - **VOLUME_TYPE** - Instance volume type
-- **SSH_KEY** - SSH key pair name configured for EC2 Region.  If the key is not attached to the work instance public key file SSH_KEY.pub or SSH_KEY.pem must be present.
+- **SSH_KEY** - SSH key pair name configured for EC2 Region. If the key is not attached to the work instance public key file <SSH_KEY>.pub or <SSH_KEY>.pem must be present.
 - **SECURITY_GROUP** - Network security group
 - **KEEP_IMAGE** - Keep resulting AMI image and the snapshot after the instance is created
 

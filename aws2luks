@@ -356,9 +356,32 @@ create_ssh_key()
     then
         local key_ident=$(curl -s $AWS_URL/meta-data/public-keys/$key_entry/)
         curl -s $AWS_URL/meta-data/public-keys/$key_entry/$key_ident > $output
-    else
-        fail "SSH key $SSH_KEY not found"
+        return
     fi
+
+    aws ec2 describe-key-pairs | jq -r '.KeyPairs[].KeyName' > $INFO_FILE
+
+    while read key_name
+    do
+        if [[ "$SSH_KEY" == "$key_name" ]]
+        then
+            if [[ -f "${SSH_KEY}.pub" ]]
+            then
+                cp "${SSH_KEY}.pub" $output
+                return
+            fi
+
+            if [[ -f "${SSH_KEY}.pem" ]]
+            then
+                ssh-keygen -f ${SSH_KEY}.pem -i > $output
+                return
+            fi
+
+            fail "Non-local SSH key $SSH_KEY requires ${SSH_KEY}.pub or ${SSH_KEY}.pem to be available"
+        fi
+    done < $INFO_FILE
+
+    fail "SSH key $SSH_KEY not found"
 }
 
 create_hook()

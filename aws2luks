@@ -230,9 +230,9 @@ setup_os()
     boot_ssh_setup
     grub_setup
 
-    create_crypttab $LUKS_DEV_UUID > $WORK_DIR/etc/crypttab
-    create_fstab > $WORK_DIR/etc/fstab
-    create_setup > $WORK_DIR/aws2luks/setup; chmod +x $WORK_DIR/aws2luks/setup
+    create_crypttab $LUKS_DEV_UUID $WORK_DIR/etc/crypttab
+    create_fstab $WORK_DIR/etc/fstab
+    create_setup $WORK_DIR/aws2luks/setup; chmod +x $WORK_DIR/aws2luks/setup
 
     if [[ -e $CUSTOM_SCRIPT ]]
     then
@@ -282,11 +282,11 @@ boot_ssh_setup()
 
     mkdir -p $initramfs/root/.ssh
 
-    create_ssh_key > $initramfs/root/.ssh/authorized_keys; chmod -R 0700 $initramfs/root/.ssh
-    create_hook    > $initramfs/hooks/aws2luks;            chmod +x $initramfs/hooks/aws2luks
-    create_unlock  > $WORK_DIR/aws2luks/unlock;            chmod +x $WORK_DIR/aws2luks/unlock
-    create_rescue  > $WORK_DIR/aws2luks/rescue;            chmod +x $WORK_DIR/aws2luks/rescue
-    create_profile > $WORK_DIR/aws2luks/.profile;          chmod +x $WORK_DIR/aws2luks/.profile
+    create_ssh_key $initramfs/root/.ssh/authorized_keys; chmod -R 0700 $initramfs/root/.ssh
+    create_hook    $initramfs/hooks/aws2luks;            chmod +x $initramfs/hooks/aws2luks
+    create_unlock  $WORK_DIR/aws2luks/unlock;            chmod +x $WORK_DIR/aws2luks/unlock
+    create_rescue  $WORK_DIR/aws2luks/rescue;            chmod +x $WORK_DIR/aws2luks/rescue
+    create_profile $WORK_DIR/aws2luks/.profile;          chmod +x $WORK_DIR/aws2luks/.profile
 }
 
 grub_setup()
@@ -304,7 +304,7 @@ grub_setup()
 
 create_setup()
 {
-    cat <<EOT
+    cat <<EOT > $1
 #!/bin/bash
 
 fail()
@@ -329,15 +329,16 @@ EOT
 create_crypttab()
 {
     local luks_dev_uuid=$1
+    local output=$2
 
-    cat <<EOT
+    cat <<EOT > $output
 $LVM_DEVICE UUID=$luks_dev_uuid none luks
 EOT
 }
 
 create_fstab()
 {
-    cat <<EOT
+    cat <<EOT > $1
 LABEL=$SWAP_LABEL  swap   swap  defaults  0  0
 LABEL=$BOOT_LABEL  /boot  ext4  defaults  0  0
 LABEL=$ROOT_LABEL  /      ext4  defaults  0  0
@@ -348,20 +349,44 @@ EOT
 
 create_ssh_key()
 {
+    local output=$1
     local key_entry=$(curl -s $AWS_URL/meta-data/public-keys/ | grep $SSH_KEY | cut -f 1 -d '=')
 
     if [[ ! -z "$key_entry" ]]
     then
         local key_ident=$(curl -s $AWS_URL/meta-data/public-keys/$key_entry/)
-        curl -s $AWS_URL/meta-data/public-keys/$key_entry/$key_ident
-    else
-        fail "SSH key $SSH_KEY not found"
+        curl -s $AWS_URL/meta-data/public-keys/$key_entry/$key_ident > $output
+        return
     fi
+
+    aws ec2 describe-key-pairs | jq -r '.KeyPairs[].KeyName' > $INFO_FILE
+
+    while read key_name
+    do
+        if [[ "$SSH_KEY" == "$key_name" ]]
+        then
+            if [[ -f "${SSH_KEY}.pub" ]]
+            then
+                cp "${SSH_KEY}.pub" $output
+                return
+            fi
+
+            if [[ -f "${SSH_KEY}.pem" ]]
+            then
+                ssh-keygen -f ${SSH_KEY}.pem -i > $output
+                return
+            fi
+
+            fail "Non-local SSH key $SSH_KEY requires ${SSH_KEY}.pub or ${SSH_KEY}.pem to be available"
+        fi
+    done < $INFO_FILE
+
+    fail "SSH key $SSH_KEY not found"
 }
 
 create_hook()
 {
-    cat <<EOT
+    cat <<EOT > $1
 #!/bin/bash
 
 fail()
@@ -391,7 +416,7 @@ EOT
 
 create_profile()
 {
-    cat <<EOT
+    cat <<EOT > $1
 alias unlock=". \$HOME/unlock"
 alias rescue="\$HOME/rescue"
 echo "Enter 'unlock' to unlock and continue booting"
@@ -402,7 +427,7 @@ EOT
 
 create_unlock()
 {
-    cat <<EOT
+    cat <<EOT > $1
 fail() { echo "Script failed"; exit 1; }
 trap fail INT TERM
 
@@ -426,7 +451,7 @@ EOT
 
 create_rescue()
 {
-    cat <<EOT
+    cat <<EOT > $1
 fail()
 {
     test -e error.out && (cat error.out 1>&2; rm error.out)

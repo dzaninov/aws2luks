@@ -1,0 +1,42 @@
+@startuml
+Scale 1
+Hide Stereotype
+SkinParam ArrowColor Black
+SkinParam DefaultFontSize 18
+SkinParam DefaultFontName Arial
+
+Together {
+	Database "**EBS Volume**\n/dev/xvda" as Disk #FFE6FF
+	Node "**Partition**\n/dev/xvda1" as Partition1 #E6F2FF
+	Disk-down->Partition1
+
+	File "**Filesystem**\n/boot" as Boot #FFF7E6
+	Partition1-down-->Boot
+}
+
+SkinParam Rectangle {
+	BorderColor<<LUKS>> Gray
+	BackgroundColor<<LUKS>> #F3F2FF/#FFFAFF
+}
+
+Rectangle "\n**LUKS Encrypted**" as LUKS <<LUKS>> {
+	Node "**Partition**\n/dev/xvda2" as Partition2 #E6F2FF
+	Disk-right->Partition2
+	
+	Rectangle "**LVM VG**\n/dev/mapper/lvm_crypt" as VG #D7EED7
+	Partition2-right->VG
+	
+	Rectangle "**LVM LV**\n/dev/system/root" as LV_Root #D7EED7
+	VG-down->LV_Root
+	File "**Filesystem**\n/" as root #FFF7E6
+	LV_Root-down->root
+	
+	Rectangle "**LVM LV**\n/dev/system/swap" as LV_Swap #D7EED7
+	VG-down->LV_Swap
+	File "**Swap**\n" as swap #FFF7E6
+	LV_Swap-down->swap
+	
+	Rectangle "**Free Space**\nSnapshots / User LVs" as LV_Free #D7EED7
+	VG-down->LV_Free
+}
+@enduml

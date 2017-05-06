@@ -1,5 +1,5 @@
 @startuml
-Scale 1
+Scale 0.9
 Hide Stereotype
 SkinParam ArrowColor Black
 SkinParam DefaultFontSize 18
